@@ -1,7 +1,20 @@
 const express=require('express'),cors=require('cors');
 const app=express();app.use(cors());
-const COOKIE=process.env.COOKIE||'';
+let COOKIE='',LAST_LOGIN=0;
+async function login(){
+ try{
+  const U=process.env.STRIX_USER, P=process.env.STRIX_PASS;
+  if(!U||!P) return '';
+  const fd=new URLSearchParams({j_username:U,j_password:P});
+  const r=await fetch('https://www.strixby.com/j_spring_security_check',{method:'POST',body:fd,redirect:'manual',headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+  const c=r.headers.get('set-cookie')||r.headers.get('Set-Cookie')||'';
+  const m=c.match(/JSESSIONID=[^;]+/);
+  if(m){COOKIE=m[0];LAST_LOGIN=Date.now();console.log('Login OK');}
+  return COOKIE;
+ }catch(e){console.log('login err',e.message);return '';}
+}
 async function getV(){
+ if(!COOKIE || Date.now()-LAST_LOGIN>1000*60*30) await login();
  const r=await fetch('https://www.strixby.com/api/vehicle/getVehiclesList?mobile=0&streetzUserId=17',{headers:{Cookie:COOKIE,'User-Agent':'Mozilla/5.0'}});
  const j=await r.json();return j.data||j.vehicles||[];
 }
@@ -10,14 +23,13 @@ app.get('/api/vehicles',async(req,res)=>{
  try{
   if(Date.now()-LAST>15000){
    const raw=await getV();
-   CACHE=raw.filter(v=>{
-    const a=(v.alias||v.name||'').toString();
-    return /3[8-9]|4[0-6]|VL176/.test(a);
-   }).map(v=>({id:v.id,alias:v.alias||v.name,patente:v.licensePlate||'',lat:parseFloat(v.latitude||v.lat),lng:parseFloat(v.longitude||v.lng),vel:v.speed||0})).filter(v=>!isNaN(v.lat));
+   CACHE=raw.filter(v=>/38|39|40|41|42|43|44|45|46|VL176|VL/i.test((v.alias||v.name||'').toString()))
+  .map(v=>({id:v.id,alias:v.alias||v.name,patente:v.licensePlate||'',lat:parseFloat(v.latitude||v.lat),lng:parseFloat(v.longitude||v.lng),vel:v.speed||0}))
+  .filter(v=>!isNaN(v.lat));
    LAST=Date.now();
   }
   res.json({count:CACHE.length,vehicles:CACHE});
- }catch(e){res.status(500).json({error:e.message})}
+ }catch(e){res.status(500).json({error:e.message,cookie:COOKIE?'ok':'vacio'})}
 });
-app.get('/',(req,res)=>res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Barrancas Vivo</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script><style>body{margin:0;font-family:system-ui;background:#0f1113;color:#eee}#map{height:100vh}.badge{position:absolute;top:10px;left:50px;z-index:1000;background:#111;padding:10px 14px;border-radius:10px}</style></head><body><div class=badge id=info>Cargando 38-46 + VL176...</div><div id=map></div><script>const map=L.map('map').setView([-32.896,-68.842],13);L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19}).addTo(map);let ms={};async function load(){try{const r=await fetch('/api/vehicles');const d=await r.json();document.getElementById('info').textContent=d.count+' camiones - '+new Date().toLocaleTimeString();d.vehicles.forEach(v=>{const k=v.id||v.patente;if(ms[k])ms[k].setLatLng([v.lat,v.lng]);else ms[k]=L.marker([v.lat,v.lng]).addTo(map).bindPopup(v.alias+'<br>'+v.patente+' '+v.vel+'km/h')})}catch(e){}}load();setInterval(load,20000);<\/script></body></html>`));
+app.get('/',(req,res)=>res.send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Barrancas Vivo</title><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script><style>body{margin:0;background:#0a0e0a;color:#fff;font-family:system-ui}#map{height:100vh}.b{position:absolute;top:12px;left:50px;z-index:999;background:#111;padding:10px 14px;border-radius:10px;border:1px solid #333}</style></head><body><div class=b id=i>Cargando camiones 38-46...</div><div id=map></div><script>const m=L.map('map').setView([-32.89,-68.84],13);L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19}).addTo(m);let mk={};async function ld(){try{const r=await fetch('/api/vehicles');const d=await r.json();document.getElementById('i').textContent=d.count+' camiones - '+new Date().toLocaleTimeString();d.vehicles.forEach(v=>{if(mk[v.id])mk[v.id].setLatLng([v.lat,v.lng]);else mk[v.id]=L.marker([v.lat,v.lng]).addTo(m).bindPopup('<b>'+v.alias+'</b><br>'+v.patente+' '+v.vel+'km/h')})}catch(e){}}ld();setInterval(ld,20000);<\/script></body></html>`));
 app.listen(process.env.PORT||3000,()=>console.log('ok'));
